@@ -1,0 +1,26 @@
+const assert=require('node:assert/strict'),L=require('../app/src/main/assets/ledger.js');let passed=0;
+function check(name,fn){fn();passed++;console.log('PASS '+name);}
+const s=L.initial(),date=L.today(),m=date.slice(0,7);const tx=(raw={})=>L.transaction({type:'expense',amount:1000,date,category:'餐饮',account:'cash',book:'daily',note:'午餐',...raw},s);
+check('amounts use exact cents',()=>{assert.equal(L.cents('0.29'),29);assert.equal(L.cents('12.30'),1230);assert.equal(L.cents('-12.30',true),-1230);});
+for(const v of ['0','-2','NaN','Infinity','1.001','1e3','1,000','1000000000','','.3'])check('reject invalid amount '+v,()=>assert.throws(()=>L.cents(v)));
+check('valid calendar dates',()=>{assert(L.validDate('2024-02-29'));assert(!L.validDate('2025-02-29'));assert(!L.validDate('2026-13-01'));assert(!L.validDate('2026-04-31'));assert(!L.validDate('2026-1-2'));});
+for(const raw of [{amount:0},{amount:-1},{amount:1.5},{type:'pay'},{account:'missing'},{book:'missing'},{category:'missing'},{date:'not-date'},{type:'transfer',to:'cash'},{type:'transfer',to:'missing'}])check('reject invalid transaction '+JSON.stringify(raw),()=>assert.throws(()=>tx(raw)));
+check('income, transfer, refund keep ledger balanced',()=>{s.accounts[0].opening=10000;s.transactions.push(tx(),tx({type:'income',amount:20000,category:'工资'}),tx({type:'transfer',amount:3000,to:'bank'}),tx({type:'refund',amount:400}));const st=L.stats(s,m);assert.equal(st.expense,1000);assert.equal(st.refund,400);assert.equal(st.netExpense,600);assert.equal(st.income,20000);assert.equal(st.balance,19400);assert.equal(st.cats['餐饮'],600);const b=L.balances(s);assert.equal(b[0].balance,26400);assert.equal(b[2].balance,3000);assert.equal(b.reduce((n,a)=>n+a.balance,0),29400);});
+check('book stats isolated, account totals shared',()=>{s.books.push({id:'trip',name:'旅行'});s.transactions.push(tx({book:'trip',amount:2500}));assert.equal(L.stats(s,m).netExpense,600);assert.equal(L.stats(s,m,'trip').netExpense,2500);assert.equal(L.balances(s).reduce((n,a)=>n+a.balance,0),26900);});
+check('credit repayments remain transfers',()=>{s.accounts.push({id:'credit',name:'信用卡',opening:-50000,kind:'credit'});const before=L.stats(s,m).netExpense;s.transactions.push(tx({type:'transfer',amount:5000,to:'credit'}));assert.equal(L.stats(s,m).netExpense,before);assert.equal(L.balances(s).find(a=>a.id==='credit').balance,-45000);});
+check('simple local batch parser',()=>{const a=L.parseLocal('早餐18，地铁3',s);assert.equal(a.length,2);assert.equal(a[0].amount,1800);assert.equal(a[0].category,'餐饮');assert.equal(a[1].category,'交通');assert.equal(a[1].amount,300);});
+check('local parser keeps income and refunds distinct',()=>{assert.equal(L.parseLocal('工资12000',s)[0].type,'income');assert.equal(L.parseLocal('餐饮退款18',s)[0].type,'refund');});
+check('local parser refuses ambiguous multi amounts',()=>assert.throws(()=>L.parseLocal('早餐18加地铁3',s)));
+check('local parser refuses transfer without accounts',()=>assert.throws(()=>L.parseLocal('转账500',s)));
+check('local parser refuses extra decimals',()=>assert.throws(()=>L.parseLocal('早餐1.234元',s)));
+for(const v of ['早餐-18','收入1万','明天午餐18','本月预算5000','早餐花了多少'])check('local parser refuses ambiguous intent '+v,()=>assert.throws(()=>L.parseLocal(v,s)));
+check('monthly schedule clamps month end',()=>assert.equal(L.nextDate('2026-01-31','monthly'),'2026-02-28'));
+check('yearly schedule handles leap day',()=>assert.equal(L.nextDate('2024-02-29','yearly'),'2025-02-28'));
+check('backup round trip preserves financial state',()=>{const restored=L.validateBackup(JSON.parse(JSON.stringify(s)));assert.deepEqual(restored.transactions,s.transactions);assert.deepEqual(L.balances(restored),L.balances(s));assert.deepEqual(restored.chat,[]);});
+const invalids=[x=>x.version=2,x=>x.accounts[0].opening=0.5,x=>x.accounts.push(x.accounts[0]),x=>x.transactions.push(x.transactions[0]),x=>x.transactions[0].account='gone',x=>x.categories=[],x=>x.budgets={total:-1},x=>x.books=[],x=>x.rules=[{id:'r',next:'bad',interval:'monthly',template:x.transactions[0]}],x=>x.goals=[{id:'g',name:'x',target:100,saved:-1}]];
+invalids.forEach((mut,i)=>check('invalid backup '+i+' rejected before replacing data',()=>{const raw=JSON.parse(JSON.stringify(s));mut(raw);assert.throws(()=>L.validateBackup(raw));}));
+check('CSV round trip escapes commas, quotes, multiline and formulas',()=>{const c=L.initial();c.transactions.push(L.transaction({type:'expense',amount:12,date,category:'餐饮',account:'cash',note:'=2+3,"咖啡"\n第二行',tag:'@item'},c));const csv=L.csv(c);assert(csv.includes("'=2+3"));const a=L.readCSV(csv,c);assert.equal(a[0].note,c.transactions[0].note);assert.equal(a[0].tag,c.transactions[0].tag);assert.equal(a[0].amount,12);});
+check('CSV invalid headers fail',()=>assert.throws(()=>L.readCSV('date,amount\n2026-01-01,100',s)));
+check('CSV unclosed quotes fail',()=>assert.throws(()=>L.readCSV('"bad',s)));
+check('CSV foreign account fail',()=>{const csv=L.csv(s).replace('现金','不存在的账户');assert.throws(()=>L.readCSV(csv,s));});
+console.log('TOTAL PASSED: '+passed);

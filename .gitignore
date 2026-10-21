@@ -1,0 +1,18 @@
+work/
+outputs/
+.gradle/
+local.properties
+**/build/
+.playwright-cli/
+README.local.md
+
+# Local credentials and generated data
+.env
+.env.*
+!.env.example
+*.keystore
+*.jks
+*.p12
+*.pem
+*.enc
+*.log
