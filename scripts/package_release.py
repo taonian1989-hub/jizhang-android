@@ -1,51 +1,37 @@
-"""Package source only; never include local signing keys, build files or model secrets."""
+"""Create versioned public artifacts while excluding local secrets and build data."""
 from pathlib import Path
-import hashlib
-import shutil
-import zipfile
+import hashlib,shutil,xml.etree.ElementTree as ET,zipfile
 
 root=Path(__file__).resolve().parents[1]
-out=root/'outputs'
-out.mkdir(exist_ok=True)
-apk=out/'记账_0.1.0_预览版.apk'
-if not apk.exists():
-    raise SystemExit('Build the APK before packaging')
-source=out/'记账_0.1.0_源码.zip'
-allow_dirs=['app','scripts','tests','docs']
-allow_files=['README.md','LICENSE','THIRD_PARTY_NOTICES.md','build.gradle','settings.gradle','CHANGELOG.md','.gitignore','.gitattributes']
-files=[root/f for f in allow_files]
-for folder in allow_dirs:
+version=ET.parse(root/'app/src/main/AndroidManifest.xml').getroot().attrib['{http://schemas.android.com/apk/res/android}versionName']
+out=root/'outputs';out.mkdir(exist_ok=True)
+prefix='记账_'+version+'_'
+apk=out/(prefix+'预览版.apk')
+if not apk.exists():raise SystemExit('Build the APK before packaging')
+source=out/(prefix+'源码.zip')
+files=[root/f for f in ['README.md','LICENSE','THIRD_PARTY_NOTICES.md','CHANGELOG.md','build.gradle','settings.gradle','.gitignore','.gitattributes']]
+for folder in ['app','scripts','tests','docs']:
     files.extend(p for p in (root/folder).rglob('*') if p.is_file() and not any(x in {'build','.gradle','__pycache__'} for x in p.relative_to(root).parts))
 with zipfile.ZipFile(source,'w',zipfile.ZIP_DEFLATED) as z:
-    for p in sorted(files):
-        z.write(p,'jizhang-0.1.0/'+p.relative_to(root).as_posix())
-shutil.copyfile(root/'docs/使用说明_v1.md',out/'记账_0.1.0_使用说明.md')
-shutil.copyfile(root/'docs/验收记录_v1.md',out/'记账_0.1.0_验收记录.md')
-(out/'记账_0.1.0_交付说明.md').write_text('''# 记账 0.1.0 个人预览版
+    for p in sorted(files):z.write(p,'jizhang-'+version+'/'+p.relative_to(root).as_posix())
+for src,suffix in [('使用说明_v1.md','使用说明.md'),('验收记录_v1.md','验收记录.md')]:shutil.copyfile(root/'docs'/src,out/(prefix+suffix))
+(out/(prefix+'交付说明.md')).write_text(f'''# 记账 {version} 个人预览版
 
-安装 [Android APK](记账_0.1.0_预览版.apk)，支持 Android 8.0 及以上。将文件传到手机，按系统提示允许所选来源安装，打开即可使用，无需登录。
+支持Android 8.0及以上。此版新增首页及助手语音输入，以及支出、收入、转账和退款对应表单。原版可使用相同签名覆盖安装，无需卸载，建议升级前先导出JSON备份。
 
-首版包含自然语言记账与确认卡片、收支/转账/退款、多账户和账本、预算、分类统计与趋势、周期账单、储蓄目标、JSON备份恢复和CSV导入导出。支持 DeepSeek、Kimi、GLM 和自定义兼容模型，联网搜索独立使用 GLM。
+语音优先使用手机可用的本地识别服务，兼容系统语音窗口；首次主动使用时申请麦克风权限。识别结果先回填文字，不会自动发问或记账。本应用不保存原始音频，系统语音服务可能联网；没有可用服务时可使用输入法的语音键。
 
-先到资产页设置期初余额，再试试“早餐18，地铁3”。配置AI请在设置→模型连接中填写自己的开放平台Key；需要联网时另配置GLM并主动开启搜索。
+四种表单只显示匹配的账户和分类。转账不保存消费分类，日期、账本和可选备注/标签保留。222项本地检查通过，APK v2/v3签名有效；真实麦克风、各机型识别服务和实际Key调用仍待真机联调。截图使用标注的内置演示数据。
 
-已通过160项本地自动检查与APK v2/v3签名校验。未连接安卓真机、未使用真实模型Key；真实手机加密存储、文件选择器、键盘安全区及实网调用仍需联调。浏览器界面截图使用明确标注的示例数据，不是真机截图。
+[安装APK]({prefix}预览版.apk) · [完整源码]({prefix}源码.zip) · [使用说明]({prefix}使用说明.md) · [验收记录]({prefix}验收记录.md)
 
-本版不提供银行自动同步、截图OCR、云端多人协作或系统通知。CSV只支持本应用列格式。完整功能、隐私和容量边界见 [使用说明](记账_0.1.0_使用说明.md) 与 [验收记录](记账_0.1.0_验收记录.md)。
-
-[源码压缩包](记账_0.1.0_源码.zip) 不含签名私钥。更新安装需使用原有签名；开发者请妥善保管本机work/signing中的签名文件。
-
-卸载前请导出完整JSON备份。JSON/CSV备份为明文，请妥善保存。
+源码包不含签名私钥、模型Key或用户账本。导出的JSON/CSV备份为明文，请妥善保管。
 ''',encoding='utf-8')
 with zipfile.ZipFile(apk) as z:
-    for name in ['index.html','app.css','app.js','ledger.js']:
-        if z.read('assets/'+name)!=(root/'app/src/main/assets'/name).read_bytes():
-            raise SystemExit('APK assets differ from source: '+name)
+    for name in ['index.html','app.css','app.js','ledger.js','speech.js']:
+        if z.read('assets/'+name)!=(root/'app/src/main/assets'/name).read_bytes():raise SystemExit('APK asset differs: '+name)
 with zipfile.ZipFile(source) as z:
-    if any('/work/' in n or n.endswith(('.keystore','.enc','.apk','.jar','.class')) for n in z.namelist()):
-        raise SystemExit('Unexpected private/build file in source archive')
-manifest=out/'记账_0.1.0_SHA256.txt'
-manifest.write_text('\n'.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name for p in sorted(out.iterdir()) if p.is_file() and p!=manifest)+'\n',encoding='utf-8')
-print('Release packaged; APK assets match source; source contains no signing/build files.')
-for p in sorted(out.iterdir()):
-    if p.is_file():print(p.name,p.stat().st_size)
+    if any('/work/' in n or n.endswith(('.keystore','.enc','.apk','.jar','.class','README.local.md')) for n in z.namelist()):raise SystemExit('Private/build file in source')
+manifest=out/(prefix+'SHA256.txt')
+manifest.write_text('\n'.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name for p in sorted(out.iterdir()) if p.is_file() and p!=manifest and p.name.startswith(prefix))+'\n',encoding='utf-8')
+print('Packaged version '+version+'; APK assets match source; signing/build files excluded.')

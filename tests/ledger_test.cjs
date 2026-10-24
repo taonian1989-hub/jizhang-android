@@ -14,6 +14,10 @@ check('local parser refuses ambiguous multi amounts',()=>assert.throws(()=>L.par
 check('local parser refuses transfer without accounts',()=>assert.throws(()=>L.parseLocal('转账500',s)));
 check('local parser refuses extra decimals',()=>assert.throws(()=>L.parseLocal('早餐1.234元',s)));
 for(const v of ['早餐-18','收入1万','明天午餐18','本月预算5000','早餐花了多少'])check('local parser refuses ambiguous intent '+v,()=>assert.throws(()=>L.parseLocal(v,s)));
+check('transfers need no category',()=>assert.equal(tx({type:'transfer',to:'bank',category:undefined}).category,''));
+check('legacy transfer category is normalized',()=>assert.equal(tx({type:'transfer',to:'bank',category:'餐饮'}).category,''));
+check('expense still requires a real category',()=>assert.throws(()=>tx({category:'does-not-exist'})));
+check('transfer backup survives category removal',()=>{const c=L.initial();c.transactions.push(L.transaction({type:'transfer',to:'bank',account:'cash',amount:100,date,category:'餐饮'},c));c.categories=['其他'];assert.equal(L.validateBackup(c).transactions[0].category,'');});
 check('monthly schedule clamps month end',()=>assert.equal(L.nextDate('2026-01-31','monthly'),'2026-02-28'));
 check('yearly schedule handles leap day',()=>assert.equal(L.nextDate('2024-02-29','yearly'),'2025-02-28'));
 check('backup round trip preserves financial state',()=>{const restored=L.validateBackup(JSON.parse(JSON.stringify(s)));assert.deepEqual(restored.transactions,s.transactions);assert.deepEqual(L.balances(restored),L.balances(s));assert.deepEqual(restored.chat,[]);});
