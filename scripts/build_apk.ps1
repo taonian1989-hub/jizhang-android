@@ -28,7 +28,7 @@ $signDir=Join-Path $projectRoot 'work\signing'
 New-Item -ItemType Directory -Path $signDir -Force | Out-Null
 $keystore=Join-Path $signDir 'personal-preview.keystore'
 if (-not (Test-Path -LiteralPath $keystore)) { Invoke-Checked (Join-Path $jdk 'bin\keytool.exe') @('-genkeypair','-keystore',$keystore,'-storepass','android','-keypass','android','-alias','personal-preview','-keyalg','RSA','-keysize','2048','-validity','10000','-dname','CN=Jizhang Personal Preview,O=Personal Use,C=CN') }
-$apkPath=Join-Path $outputDir '记账_0.1.1_预览版.apk'
+$apkPath=Join-Path $outputDir '记账_0.1.2_预览版.apk'
 Invoke-Checked (Join-Path $jdk 'bin\java.exe') @('-jar',(Join-Path $buildTools 'lib\apksigner.jar'),'sign','--v4-signing-enabled','false','--ks',$keystore,'--ks-key-alias','personal-preview','--ks-pass','pass:android','--key-pass','pass:android','--out',$apkPath,(Join-Path $buildDir 'aligned.apk'))
 Invoke-Checked (Join-Path $jdk 'bin\java.exe') @('-jar',(Join-Path $buildTools 'lib\apksigner.jar'),'verify','--verbose','--print-certs',$apkPath)
 Invoke-Checked (Join-Path $buildTools 'aapt2.exe') @('dump','badging',$apkPath)

@@ -13,9 +13,9 @@ $classes=Join-Path $projectRoot 'work/protocol_tests/classes'
 New-Item -ItemType Directory -Path $classes -Force | Out-Null
 $src=Join-Path $projectRoot 'app/src/main/java/io/jizhang/assistant'
 $files=@('ModelConfig.java','ModelHttpClient.java','SearchClient.java','LifePrompt.java') | ForEach-Object {Join-Path $src $_}
-& (Join-Path $jdk 'bin/javac.exe') -encoding UTF-8 --add-modules jdk.httpserver -cp $JsonJar -d $classes @files (Join-Path $projectRoot 'tests/ModelHttpClientTest.java') (Join-Path $projectRoot 'tests/LifePromptTest.java')
+& (Join-Path $jdk 'bin/javac.exe') -encoding UTF-8 --add-modules jdk.httpserver -cp $JsonJar -d $classes @files (Join-Path $projectRoot 'tests/ModelHttpClientTest.java') (Join-Path $projectRoot 'tests/LifePromptTest.java') (Join-Path $projectRoot 'tests/SearchClientTest.java')
 if($LASTEXITCODE -ne 0){throw 'Protocol test compilation failed'}
-foreach($name in @('ModelHttpClientTest','LifePromptTest')){
+foreach($name in @('ModelHttpClientTest','LifePromptTest','SearchClientTest')){
  & (Join-Path $jdk 'bin/java.exe') --add-modules jdk.httpserver -cp ($classes+';'+$JsonJar) ('io.jizhang.assistant.'+$name)
  if($LASTEXITCODE -ne 0){throw ('Protocol tests failed: '+$name)}
 }

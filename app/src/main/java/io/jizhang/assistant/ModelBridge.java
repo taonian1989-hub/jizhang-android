@@ -64,8 +64,8 @@ public final class ModelBridge {
                 JSONObject task=new JSONObject(raw);JSONArray sources=new JSONArray();
                 boolean online=task.optBoolean("online",false);
                 if(online){
-                    emit(event("phase",id).put("message","正在检索公开资料"));
-                    String engine=task.optString("searchProvider",provider);
+                    emit(event("phase",id).put("message","正在使用 DeepSeek 联网搜索"));
+                    String engine="deepseek";
                     sources=new SearchClient().execute(store.load(engine),task.getString("query"),job.control);
                     if(job.control.cancelled)throw new java.io.InterruptedIOException("cancelled");
                     emit(event("sources",id).put("sources",sources).put("engine",engine));

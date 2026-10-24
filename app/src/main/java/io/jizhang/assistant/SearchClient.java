@@ -6,46 +6,76 @@ import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 
-/** One explicit search request, normalized to bounded evidence records. */
+/** DeepSeek's official, independent Search API. No implicit provider fallback. */
 class SearchClient {
-    HttpURLConnection open(URL u)throws IOException{return (HttpURLConnection)u.openConnection();}
-    static String endpoint(String provider)throws Exception {
-        if(provider.equals("glm"))return "https://open.bigmodel.cn/api/paas/v4/web_search";
-        throw new Exception("不支持的搜索服务");
+    HttpURLConnection open(URL url) throws IOException { return (HttpURLConnection) url.openConnection(); }
+    static String endpoint(String provider) throws Exception {
+        if ("deepseek".equals(provider)) return "https://api.deepseek.com/v1/tools/search";
+        throw new Exception("联网搜索使用 DeepSeek，请配置 DeepSeek 官方 API Key");
     }
-    static JSONObject request(String provider,String query)throws Exception {
-        if(query.trim().isEmpty()||query.codePointCount(0,query.length())>128)throw new Exception("搜索词应在 1—128 字之间");
-        if(provider.equals("glm"))return new JSONObject().put("search_query",query).put("search_engine","search_std").put("count",8).put("content_size","high");
-        throw new Exception("不支持的搜索服务");
+    static JSONObject request(String provider, String query) throws Exception {
+        endpoint(provider);
+        if (query == null || query.codePointCount(0, query.length()) > 128
+            || query.codePoints().allMatch(c -> Character.isWhitespace(c) || Character.isSpaceChar(c)))
+            throw new Exception("搜索词应在 1—128 字之间");
+        return new JSONObject().put("query", query).put("count", 8).put("need_content", false);
     }
-    static String bounded(String s,int max){return s.length()>max?s.substring(0,max):s;}
-    static JSONArray normalize(String provider,JSONObject root)throws Exception {
-        String field=provider.equals("deepseek")?"results":provider.equals("kimi")?"search_results":"search_result";
-        JSONArray items=root.optJSONArray(field);if(items==null)throw new Exception("搜索响应格式无法识别，请检查服务权限");
-        JSONArray result=new JSONArray();HashSet<String> seen=new HashSet<>();
-        for(int i=0;i<items.length()&&result.length()<8;i++){
-            JSONObject a=items.getJSONObject(i);String url=a.optString(provider.equals("glm")?"link":"url","");
-            URI u;try{u=new URI(url);}catch(Exception e){continue;}
-            if(!("https".equals(u.getScheme())||"http".equals(u.getScheme()))||u.getHost()==null||u.getRawUserInfo()!=null||url.length()>4096||!seen.add(url))continue;
-            String title=a.optString("title",u.getHost());String content=a.optString(provider.equals("glm")?"content":provider.equals("kimi")?"snippet":"summary","");
-            if(content.isEmpty())content=a.optString("snippet","");
-            result.put(new JSONObject().put("title",bounded(title,300)).put("url",url).put("site",bounded(a.optString(provider.equals("glm")?"media":"site_name",u.getHost()),100)).put("date",bounded(a.optString(provider.equals("glm")?"publish_date":"date",""),50)).put("snippet",bounded(content,6000)));
+    static boolean officialCredentials(ModelConfig config) {
+        return "deepseek".equals(config.provider) && (config.endpoint.equals("https://api.deepseek.com/chat/completions")
+            || config.endpoint.equals("https://api.deepseek.com/v1/chat/completions"));
+    }
+    private static String string(JSONObject object, String key) {
+        Object value = object.opt(key);
+        return value instanceof String ? (String) value : "";
+    }
+    static String bounded(String text, int limit) { return text.length() > limit ? text.substring(0, limit) : text; }
+    static JSONArray normalize(String provider, JSONObject root) throws Exception {
+        endpoint(provider);
+        JSONArray items = root.optJSONArray("results");
+        if (items == null) throw new Exception("DeepSeek 搜索响应格式无法识别，请检查服务权限");
+        JSONArray result = new JSONArray();
+        HashSet<String> seen = new HashSet<>();
+        for (int i = 0; i < items.length() && result.length() < 8; i++) {
+            JSONObject item = items.optJSONObject(i);
+            if (item == null) continue;
+            String url = string(item, "url");
+            URI uri;
+            try { uri = new URI(url); } catch (Exception ignored) { continue; }
+            if (!("https".equals(uri.getScheme()) || "http".equals(uri.getScheme())) || uri.getHost() == null
+                || uri.getRawUserInfo() != null || url.length() > 4096 || !seen.add(url)) continue;
+            String title = string(item, "title"), site = string(item, "site_name"), summary = string(item, "summary");
+            if (title.isEmpty()) title = uri.getHost();
+            if (site.isEmpty()) site = uri.getHost();
+            if (summary.isEmpty()) summary = string(item, "snippet");
+            result.put(new JSONObject().put("title", bounded(title, 300)).put("url", url)
+                .put("site", bounded(site, 100)).put("date", bounded(string(item, "date"), 50))
+                .put("snippet", bounded(summary, 6000)));
         }
         return result;
     }
-    JSONArray execute(ModelConfig config,String query,ModelHttpClient.Control control)throws Exception {
-        if(config.key.isEmpty())throw new Exception("请先配置搜索服务商的 API Key");
-        // A credential configured for a proxy must never be sent to an unrelated official server.
-        if(!config.endpoint.equals(ModelConfig.defaults(config.provider).endpoint))throw new Exception("搜索服务需使用官方接口配置，请选择另一已配置的官方搜索服务商");
-        byte[] payload=request(config.provider,query).toString().getBytes(StandardCharsets.UTF_8);
-        HttpURLConnection c=open(new URL(endpoint(config.provider)));control.connection=c;
-        try{
-            if(control.cancelled)throw new InterruptedIOException("cancelled");
-            c.setInstanceFollowRedirects(false);c.setConnectTimeout(15000);c.setReadTimeout(45000);c.setRequestMethod("POST");c.setDoOutput(true);c.setFixedLengthStreamingMode(payload.length);
-            c.setRequestProperty("Authorization","Bearer "+config.key);c.setRequestProperty("Content-Type","application/json");
-            try(OutputStream out=c.getOutputStream()){out.write(payload);}
-            if(c.getResponseCode()!=200)throw new Exception("联网搜索失败："+ModelHttpClient.httpError(c.getResponseCode()));
-            try(InputStream in=c.getInputStream()){return normalize(config.provider,new JSONObject(ModelHttpClient.readLimited(in,2*1024*1024)));}
-        }catch(JSONException e){throw new Exception("搜索响应格式无法识别");}finally{control.connection=null;c.disconnect();}
+    JSONArray execute(ModelConfig config, String query, ModelHttpClient.Control control) throws Exception {
+        if (config.key.isEmpty()) throw new Exception("请先在模型连接中配置 DeepSeek 官方 API Key，再使用联网搜索");
+        if (!officialCredentials(config)) throw new Exception("联网搜索需要 DeepSeek 官方接口凭据；自定义代理 Key 不会发送到官方搜索");
+        byte[] payload = request(config.provider, query).toString().getBytes(StandardCharsets.UTF_8);
+        HttpURLConnection connection = open(new URL(endpoint(config.provider)));
+        control.connection = connection;
+        try {
+            if (control.cancelled) throw new InterruptedIOException("cancelled");
+            connection.setInstanceFollowRedirects(false);
+            connection.setConnectTimeout(15000); connection.setReadTimeout(45000);
+            connection.setRequestMethod("POST"); connection.setDoOutput(true); connection.setFixedLengthStreamingMode(payload.length);
+            connection.setRequestProperty("Authorization", "Bearer " + config.key);
+            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            try (OutputStream out = connection.getOutputStream()) { out.write(payload); }
+            int status = connection.getResponseCode();
+            if (status != 200) throw new Exception("DeepSeek 联网搜索失败：" + ModelHttpClient.httpError(status));
+            try (InputStream in = connection.getInputStream()) {
+                return normalize(config.provider, new JSONObject(ModelHttpClient.readLimited(in, 2 * 1024 * 1024)));
+            }
+        } catch (JSONException e) { throw new Exception("DeepSeek 搜索响应格式无法识别"); }
+        catch (IOException e) {
+            if (control.cancelled) throw e;
+            throw new Exception("DeepSeek 联网搜索连接失败或超时，请检查网络后手动重试");
+        } finally { control.connection = null; connection.disconnect(); }
     }
 }

@@ -27,4 +27,6 @@ check('CSV round trip escapes commas, quotes, multiline and formulas',()=>{const
 check('CSV invalid headers fail',()=>assert.throws(()=>L.readCSV('date,amount\n2026-01-01,100',s)));
 check('CSV unclosed quotes fail',()=>assert.throws(()=>L.readCSV('"bad',s)));
 check('CSV foreign account fail',()=>{const csv=L.csv(s).replace('现金','不存在的账户');assert.throws(()=>L.readCSV(csv,s));});
+check('new ledger uses DeepSeek search',()=>assert.equal(L.initial().settings.searchProvider,'deepseek'));
+check('existing GLM search setting migrates to DeepSeek',()=>{const raw=L.initial();raw.settings.searchProvider='glm';assert.equal(L.validateBackup(raw).settings.searchProvider,'deepseek');});
 console.log('TOTAL PASSED: '+passed);
